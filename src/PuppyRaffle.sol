@@ -82,6 +82,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice they have to pay the entrance fee * the number of players
     /// @notice duplicate entrants are not allowed
     /// @param newPlayers the list of players to enter the raffle
+    // @audit - [M-2] Looping through players array to check for duplicates.
     function enterRaffle(address[] memory newPlayers) public payable {
         // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
@@ -127,6 +128,7 @@ contract PuppyRaffle is ERC721, Ownable {
                 return i;
             }
         }
+        // @audit - if the player is at index 0, it will return 0 and a player might think they are not entered the raffle.
         return 0;
     }
 

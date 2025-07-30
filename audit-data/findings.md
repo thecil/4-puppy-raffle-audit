@@ -55,7 +55,22 @@ This issue deems Critical severity because a reentrancy attack can end up causin
 
 **Recommended Mitigation**:
 
-Add [ReentrancyGuardTransient](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/ReentrancyGuardTransient.sol) contract to the `PuppyRaffle` contract and add the `nonReentrant` modifier to the  `PuppyRaffle::refund` function as a precautionary measure. This will prevent recursive calls and therefore protect against potential reentrancy attacks.
+1. Follows CEI (Check, Effects, Interactions) pattern.
+```javascript
+    function refund(uint256 playerIndex) public {
+        address playerAddress = players[playerIndex];
+        // Checks
+        require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+        require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+        // Effects
+        players[playerIndex] = address(0);
+        // Interactions
+        payable(msg.sender).sendValue(entranceFee);
+        emit RaffleRefunded(playerAddress);
+    }
+```
+
+2. Alternitatively, add [ReentrancyGuardTransient](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/ReentrancyGuardTransient.sol) contract to the `PuppyRaffle` contract and add the `nonReentrant` modifier to the  `PuppyRaffle::refund` function as a precautionary measure. This will prevent recursive calls and therefore protect against potential reentrancy attacks.
 
 The OpenZeppelin version would need to be bumped to 5.1.
 
@@ -69,7 +84,22 @@ This issue deems Critical severity because a reentrancy attack can end up causin
 
 **Recommended Mitigation**:
 
-Add [ReentrancyGuardTransient](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/ReentrancyGuardTransient.sol) contract to the `PuppyRaffle` contract and add the `nonReentrant` modifier to the  `PuppyRaffle::selectWinner` function as a precautionary measure. This will prevent recursive calls and therefore protect against potential reentrancy attacks.
+1. Follows CEI (Check, Effects, Interactions) pattern.
+```javascript
+    function refund(uint256 playerIndex) public {
+        address playerAddress = players[playerIndex];
+        // Checks
+        require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+        require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+        // Effects
+        players[playerIndex] = address(0);
+        // Interactions
+        payable(msg.sender).sendValue(entranceFee);
+        emit RaffleRefunded(playerAddress);
+    }
+```
+
+2. Alternitatively, add [ReentrancyGuardTransient](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/ReentrancyGuardTransient.sol) contract to the `PuppyRaffle` contract and add the `nonReentrant` modifier to the  `PuppyRaffle::selectWinner` function as a precautionary measure. This will prevent recursive calls and therefore protect against potential reentrancy attacks.
 
 The OpenZeppelin version would need to be bumped to 5.1.
 
@@ -126,7 +156,6 @@ address feeAddress = address(0);
 ```bash
 forge test --mt testWithdrawFees
 ```
-
 </details>
 
 **Recommended Mitigation**: Check that the inputed `_feeAddress` value is different than zero address by using a conditional statement.
@@ -159,6 +188,106 @@ constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) 
 
 ```
 
+
+### [M-2] Looping through players array to check for duplicates in `PuppyRaffle::enterRaffle` Function is a potential denial of service (DoS) attack, incrementing gas cost for future entrants.
+
+**Description**: The `PuppyRaffle::enterRaffle` function loops through the `players` array to check for duplicates. However, the longer the `PuppyRaffle::players` array is, the more checks a new player will have to make.
+
+This means the gas cost for players who enter right when the raffle start will be dramatically lower than those who enter later.
+Every additional address in the `players` array, is an additional check the loop will have to make.
+
+```javascript
+    // @audit - DoS Attack
+    for (uint256 i = 0; i < players.length - 1; i++) {
+        for (uint256 j = i + 1; j < players.length; j++) {
+            require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+        }
+    }
+```
+
+**Impact**: The gas cost for raffle entrants will greatly increase as more players enter the raffle. Discouraging later users from entering, and caousing a rush at the start of a raffle to be on of the first entrants in the queue.
+
+An attacker might make the `PuppyRaffle::players` array so big, that no one else enters, guarenteeing themselves the win.
+
+**Proof of Concept:**
+
+If we have 2 sets of 100 players enter, the gas cost will be as such:
+- 1st 100 players: ~6252048 gas
+- 2nd 100 players: ~18068138 gas
+
+This is more than 3x more expensive than the first 100 players.
+
+<details>
+<summary>Proof Of Code</summary>
+Place the following test into `test/PuppyRaffleTest.sol`.
+
+```javascript
+    function test_denialOfService_enterRaffle() public {
+        vm.txGasPrice(1);
+        uint256 maxPlayers = 100;
+        address[] memory players = new address[](maxPlayers);
+        for (uint i = 0; i < maxPlayers; i++) {
+            players[i] = address(i);
+        }
+        uint256 gasStart = gasleft();
+
+        puppyRaffle.enterRaffle{value: entranceFee * maxPlayers}(players);
+        uint256 gasEnd = gasleft();
+        uint256 gasFirstUsed = (gasStart - gasEnd) * tx.gasprice;
+
+        console.log("Gas cost first 100 players:", uint256(gasFirstUsed));
+        
+        // now for the 2nd 100 players
+        address[] memory playersTwo = new address[](maxPlayers);
+        for (uint i = 0; i < maxPlayers; i++) {
+            playersTwo[i] = address(i + maxPlayers);
+        }
+        uint256 gasStartSecond = gasleft();
+
+        puppyRaffle.enterRaffle{value: entranceFee * maxPlayers}(playersTwo);
+        uint256 gasEndSecond = gasleft();
+        uint256 gasSecondUsed = (gasStartSecond - gasEndSecond) * tx.gasprice;
+        console.log("Gas cost second 100 players:", uint256(gasSecondUsed));
+        assert(gasFirstUsed < gasSecondUsed);
+    }
+```
+</details>
+
+**Recommended Mitigation**: There are a few recomendations:
+
+1. Consider allowing duplicates. Users can make new wallet addresses anyways, so a duplicate check does not prevent the same person from entering multiple times, only the same wallet address.
+2. Consider using a mapping to check for duplicates. This would allow constant time lookup of whether a user has already entered.
+
+```diff
++   mapping(address=>uint256) public addressToRaffleId;
++   uint256 public raffleId = 0;
+
+    function enterRaffle(address[] memory newPlayers) public payable {
+        require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+        for (uint256 i = 0; i < newPlayers.length; i++) {
+            players.push(newPlayers[i]);
++           addressToRaffleId[newPlayers[i]] = raffleId;
+        }
+
+-        // Check for duplicates
+-        for (uint256 i = 0; i < players.length - 1; i++) {
+-            for (uint256 j = i + 1; j < players.length; j++) {
+-                require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+-            }
+-        }
++       // Check for duplicates only from the new players
++       for (uint256 i = 0; i < newPlayers.length; i++) {
++           require(addressToRaffleId[newPlayers[i]] != raffleId, "PuppyRaffle: Duplicate player"); 
++       }
+        emit RaffleEnter(newPlayers);
+    }
+
+    function selectWinner() external {
++       raffleId = raffleId + 1;
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+```
+
+3. Alternatively, you could use [OpenZeppelin's `EnumerableSet` library](https://docs.openzeppelin.com/contracts/5.x/api/utils#EnumerableSet).
 
 ### [L-1] Unlocked Pragma.
 
