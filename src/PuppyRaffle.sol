@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+// @audit - [L-1] Unlocked Pragma.
+// @audit - [L-2] Outdated versions of Solidity.
 pragma solidity ^0.7.6;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -35,16 +37,19 @@ contract PuppyRaffle is ERC721, Ownable {
     mapping(uint256 => string) public rarityToName;
 
     // Stats for the common puppy (pug)
+    // @audit - [L-3] State variables that could be declared constant.
     string private commonImageUri = "ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8";
     uint256 public constant COMMON_RARITY = 70;
     string private constant COMMON = "common";
 
     // Stats for the rare puppy (st. bernard)
+    // @audit - [L-3] State variables that could be declared constant.
     string private rareImageUri = "ipfs://QmUPjADFGEKmfohdTaNcWhp7VGk26h5jXDA7v3VtTnTLcW";
     uint256 public constant RARE_RARITY = 25;
     string private constant RARE = "rare";
 
     // Stats for the legendary puppy (shiba inu)
+    // @audit - [L-3] State variables that could be declared constant.
     string private legendaryImageUri = "ipfs://QmYx6GsYAKnNzZ9A6NvEKV9nf1VaDzJrqDR23Y8YSkebLU";
     uint256 public constant LEGENDARY_RARITY = 5;
     string private constant LEGENDARY = "legendary";
@@ -57,6 +62,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param _entranceFee the cost in wei to enter the raffle
     /// @param _feeAddress the address to send the fees to
     /// @param _raffleDuration the duration in seconds of the raffle
+    // @audit - [M-1] Missing zero address validation leads to lost of funds.
     constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR") {
         entranceFee = _entranceFee;
         feeAddress = _feeAddress;
@@ -77,14 +83,18 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice duplicate entrants are not allowed
     /// @param newPlayers the list of players to enter the raffle
     function enterRaffle(address[] memory newPlayers) public payable {
+        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+        // @audit - [O-1] Use cached array length instead of referencing `length` member of the storage array.
         for (uint256 i = 0; i < newPlayers.length; i++) {
             players.push(newPlayers[i]);
         }
 
         // Check for duplicates
+        // @audit - [O-1] Use cached array length instead of referencing `length` member of the storage array.
         for (uint256 i = 0; i < players.length - 1; i++) {
             for (uint256 j = i + 1; j < players.length; j++) {
+                // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
                 require(players[i] != players[j], "PuppyRaffle: Duplicate player");
             }
         }
@@ -93,9 +103,12 @@ contract PuppyRaffle is ERC721, Ownable {
 
     /// @param playerIndex the index of the player to refund. You can find it externally by calling `getActivePlayerIndex`
     /// @dev This function will allow there to be blank spots in the array
+    // @audit - [H-1] Reentrancy Vulnerability in `PuppyRaffle::refund` Function.
     function refund(uint256 playerIndex) public {
         address playerAddress = players[playerIndex];
+        // / @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+        // / @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
 
         payable(msg.sender).sendValue(entranceFee);
@@ -108,6 +121,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param player the address of a player in the raffle
     /// @return the index of the player in the array, if they are not active, it returns 0
     function getActivePlayerIndex(address player) external view returns (uint256) {
+        // @audit - [O-1] Use cached array length instead of referencing `length` member of the storage array.
         for (uint256 i = 0; i < players.length; i++) {
             if (players[i] == player) {
                 return i;
@@ -123,8 +137,12 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @dev we reset the active players array after the winner is selected
     /// @dev we send 80% of the funds to the winner, the other 20% goes to the feeAddress
     function selectWinner() external {
+        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // @audit - [L-4] Dangerous usage of `block.timestamp` at `PuppyRaffle::selectWinner`
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        // @audit - [L-5] Weak PRNG usage.
         uint256 winnerIndex =
             uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
         address winner = players[winnerIndex];
@@ -136,6 +154,7 @@ contract PuppyRaffle is ERC721, Ownable {
         uint256 tokenId = totalSupply();
 
         // We use a different RNG calculate from the winnerIndex to determine rarity
+        // @audit - [L-5] Weak PRNG usage.
         uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
         if (rarity <= COMMON_RARITY) {
             tokenIdToRarity[tokenId] = COMMON_RARITY;
@@ -149,12 +168,14 @@ contract PuppyRaffle is ERC721, Ownable {
         raffleStartTime = block.timestamp;
         previousWinner = winner;
         (bool success,) = winner.call{value: prizePool}("");
+        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
         _safeMint(winner, tokenId);
     }
 
     /// @notice this function will withdraw the fees to the feeAddress
     function withdrawFees() external {
+        // @audit - [H-3] Dangerous strict equalities at `PuppyRaffle::withdrawFees` Function, leading to a lock of withdrawals.
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
         uint256 feesToWithdraw = totalFees;
         totalFees = 0;
@@ -170,6 +191,7 @@ contract PuppyRaffle is ERC721, Ownable {
     }
 
     /// @notice this function will return true if the msg.sender is an active player
+    // @audit - [I-2] `PuppyRaffle::_isActivePlayer` function is not being used in the contract.
     function _isActivePlayer() internal view returns (bool) {
         for (uint256 i = 0; i < players.length; i++) {
             if (players[i] == msg.sender) {
