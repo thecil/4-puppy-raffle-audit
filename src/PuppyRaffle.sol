@@ -62,9 +62,10 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param _entranceFee the cost in wei to enter the raffle
     /// @param _feeAddress the address to send the fees to
     /// @param _raffleDuration the duration in seconds of the raffle
-    // @audit - [M-1] Missing zero address validation leads to lost of funds.
+    
     constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR") {
         entranceFee = _entranceFee;
+        // @audit - [I-1] Missing zero address validation.
         feeAddress = _feeAddress;
         raffleDuration = _raffleDuration;
         raffleStartTime = block.timestamp;
@@ -84,7 +85,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param newPlayers the list of players to enter the raffle
     // @audit - [M-2] Looping through players array to check for duplicates.
     function enterRaffle(address[] memory newPlayers) public payable {
-        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
         // @audit - [O-1] Use cached array length instead of referencing `length` member of the storage array.
         for (uint256 i = 0; i < newPlayers.length; i++) {
@@ -95,7 +96,7 @@ contract PuppyRaffle is ERC721, Ownable {
         // @audit - [O-1] Use cached array length instead of referencing `length` member of the storage array.
         for (uint256 i = 0; i < players.length - 1; i++) {
             for (uint256 j = i + 1; j < players.length; j++) {
-                // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+                // @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
                 require(players[i] != players[j], "PuppyRaffle: Duplicate player");
             }
         }
@@ -107,9 +108,9 @@ contract PuppyRaffle is ERC721, Ownable {
     // @audit - [H-1] Reentrancy Vulnerability in `PuppyRaffle::refund` Function.
     function refund(uint256 playerIndex) public {
         address playerAddress = players[playerIndex];
-        // / @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // / @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
-        // / @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // / @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
 
         payable(msg.sender).sendValue(entranceFee);
@@ -139,10 +140,10 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @dev we reset the active players array after the winner is selected
     /// @dev we send 80% of the funds to the winner, the other 20% goes to the feeAddress
     function selectWinner() external {
-        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         // @audit - [L-4] Dangerous usage of `block.timestamp` at `PuppyRaffle::selectWinner`
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
-        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
         // @audit - [L-5] Weak PRNG usage.
         uint256 winnerIndex =
@@ -151,6 +152,8 @@ contract PuppyRaffle is ERC721, Ownable {
         uint256 totalAmountCollected = players.length * entranceFee;
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         uint256 fee = (totalAmountCollected * 20) / 100;
+        // @audit - probability of overflow
+        // @audit - unsafe cast of uint256 to uint64
         totalFees = totalFees + uint64(fee);
 
         uint256 tokenId = totalSupply();
@@ -169,8 +172,9 @@ contract PuppyRaffle is ERC721, Ownable {
         delete players;
         raffleStartTime = block.timestamp;
         previousWinner = winner;
+        // @audit - [H-2] Reentrancy Vulnerability in `PuppyRaffle::selectWinner` Function.
         (bool success,) = winner.call{value: prizePool}("");
-        // @audit - [I-1] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
+        // @audit - [I-2] Replace `require` Statements with Custom Errors, only if solc version is 0.8.4 or higher.
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
         _safeMint(winner, tokenId);
     }
@@ -181,6 +185,7 @@ contract PuppyRaffle is ERC721, Ownable {
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
         uint256 feesToWithdraw = totalFees;
         totalFees = 0;
+        //slither-disable-next-line arbitrary-send-eth
         (bool success,) = feeAddress.call{value: feesToWithdraw}("");
         require(success, "PuppyRaffle: Failed to withdraw fees");
     }
@@ -193,7 +198,7 @@ contract PuppyRaffle is ERC721, Ownable {
     }
 
     /// @notice this function will return true if the msg.sender is an active player
-    // @audit - [I-2] `PuppyRaffle::_isActivePlayer` function is not being used in the contract.
+    // @audit - [I-3] `PuppyRaffle::_isActivePlayer` function is not being used in the contract.
     function _isActivePlayer() internal view returns (bool) {
         for (uint256 i = 0; i < players.length; i++) {
             if (players[i] == msg.sender) {
